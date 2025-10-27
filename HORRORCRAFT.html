@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HorrorCraft</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+            color: #fff;
+            background-color: #000;
+            cursor: none;
+            position: relative;
+        }
+        canvas {
+            display: block;
+        }
+        #ui-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 2px;
+            height: 2px;
+            background-color: red;
+            border-radius: 50%;
+            pointer-events: none;
+            box-shadow: 0 0 10px red;
+            transform: translate(-50%, -50%);
+        }
+        #intro-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            z-index: 100;
+            opacity: 1;
+            transition: opacity 2s ease-in-out;
+            text-align: center;
+        }
+        #intro-title {
+            font-size: 72px;
+            font-weight: bold;
+            color: #fff; /* White color for the title */
+            text-shadow: 4px 4px 8px #fff;
+            opacity: 0;
+            animation: fadeIn 2s forwards 0.5s;
+        }
+        #intro-title::before {
+            content: '* ';
+            color: #fff;
+            font-size: 0.8em;
+            margin-right: 5px;
+        }
+        #intro-title::after {
+            content: ' *';
+            color: #fff;
+            font-size: 0.8em;
+            margin-left: 5px;
+        }
+        #intro-subtitle {
+            font-size: 36px;
+            margin-top: 20px;
+            opacity: 0;
+            animation: fadeIn 2s forwards 2.5s;
+        }
+        #mobile-controls {
+            display: none;
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            justify-content: center;
+            gap: 20px;
+            pointer-events: auto;
+        }
+        .mobile-button {
+            width: 60px;
+            height: 60px;
+            background-color: rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            cursor: pointer;
+            user-select: none;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+        #game-over-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 48px;
+            font-weight: bold;
+            color: red;
+            text-shadow: 2px 2px 5px black;
+            display: none;
+            text-align: center;
+        }
+        #death-counter {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 24px;
+            font-weight: bold;
+            color: #ccc;
+        }
+        @media (max-width: 768px) {
+            #mobile-controls {
+                display: flex;
+            }
+            body {
+                cursor: default;
+            }
+            #crosshair {
+                display: none;
+            }
+        }
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div id="intro-screen">
+        <h1 id="intro-title">Horror Games</h1>
+        <h2 id="intro-subtitle">Presents: Block Survivor</h2>
+    </div>
+    <div id="ui-container">
+        <div id="crosshair"></div>
+        <div id="mobile-controls">
+            <div id="jump-button" class="mobile-button">↑</div>
+            <div id="place-button" class="mobile-button">🧱</div>
+        </div>
+        <div id="game-over-text">Вы умерли...</div>
+        <div id="death-counter">Попытки: 0 / 3</div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Инициализация сцены, камеры и рендерера
+        let scene, camera, renderer;
+        let isMobile = window.innerWidth <= 768;
+
+        // Основные переменные игры
+        const worldSize = 20; // Уменьшенный размер мира для тестирования падения
+        const blockSize = 1;
+        const playerSpeed = 0.1;
+        const jumpStrength = 0.2;
+        const gravity = -0.01;
+        let playerVelocity = new THREE.Vector3();
+        let isGrounded = false;
+        
+        let world = {};
+        let fallCounter = 0;
+        let isGameOver = false;
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // Материалы
+        const materials = {
+            'dirt': new THREE.MeshLambertMaterial({ color: 0x6E4C2F }),
+            'grass': new THREE.MeshLambertMaterial({ color: 0x76B900 }),
+            'stone': new THREE.MeshLambertMaterial({ color: 0x888888 }),
+            'wood': new THREE.MeshLambertMaterial({ color: 0x5D432E }),
+            'creepy': new THREE.MeshLambertMaterial({ color: 0x111111 }),
+            'cloud': new THREE.MeshLambertMaterial({ color: 0xFFFFFF })
+        };
+        
+        let selectedBlock = 'grass';
+
+        // Генерация мира
+        function generateWorld() {
+            const worldContainer = new THREE.Object3D();
+            const groundGeometry = new THREE.PlaneGeometry(worldSize * 2, worldSize * 2);
+            const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x76B900 });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.userData = { isBlock: true, type: 'grass', canBeBroken: false }; // Теперь нельзя ломать
+            worldContainer.add(ground);
+
+            // Случайная генерация деревьев
+            const treeTrunkGeometry = new THREE.BoxGeometry(0.5, 3, 0.5);
+            const treeLeavesGeometry = new THREE.BoxGeometry(2, 2, 2);
+            for (let i = 0; i < 50; i++) {
+                const x = (Math.random() - 0.5) * worldSize * 2;
+                const z = (Math.random() - 0.5) * worldSize * 2;
+                const trunk = new THREE.Mesh(treeTrunkGeometry, materials.wood);
+                trunk.position.set(x, 1.5, z);
+                trunk.userData = { canBeBroken: true, type: 'wood' };
+                worldContainer.add(trunk);
+                const leaves = new THREE.Mesh(treeLeavesGeometry, materials.grass);
+                leaves.position.set(x, 3.5, z);
+                leaves.userData = { canBeBroken: true, type: 'grass' };
+                worldContainer.add(leaves);
+            }
+
+            // Случайная генерация деревянных крестов
+            const crossVertical = new THREE.BoxGeometry(0.3, 2.5, 0.3);
+            const crossHorizontal = new THREE.BoxGeometry(1.5, 0.3, 0.3);
+            for (let i = 0; i < 30; i++) {
+                const x = (Math.random() - 0.5) * worldSize * 2;
+                const z = (Math.random() - 0.5) * worldSize * 2;
+                const verticalPart = new THREE.Mesh(crossVertical, materials.wood);
+                verticalPart.position.set(x, 1.25, z);
+                verticalPart.userData = { canBeBroken: true, type: 'wood' };
+                worldContainer.add(verticalPart);
+                const horizontalPart = new THREE.Mesh(crossHorizontal, materials.wood);
+                horizontalPart.position.set(x, 1.7, z);
+                horizontalPart.userData = { canBeBroken: true, type: 'wood' };
+                worldContainer.add(horizontalPart);
+            }
+
+            // Случайная генерация построек
+            const buildingMaterials = [materials.wood, materials.stone];
+            for (let i = 0; i < 5; i++) {
+                const startX = (Math.random() - 0.5) * worldSize * 2;
+                const startZ = (Math.random() - 0.5) * worldSize * 2;
+                const buildingHeight = Math.floor(Math.random() * 3) + 2;
+                const buildingMaterial = buildingMaterials[Math.floor(Math.random() * buildingMaterials.length)];
+                for (let h = 0; h < buildingHeight; h++) {
+                    const block = new THREE.Mesh(new THREE.BoxGeometry(blockSize, blockSize, blockSize), buildingMaterial);
+                    block.position.set(startX, h + 0.5, startZ);
+                    block.userData = { canBeBroken: true, type: 'building' };
+                    worldContainer.add(block);
+                }
+            }
+            
+            // Случайная генерация силуэтов
+            const silhouetteGeometry = new THREE.BoxGeometry(0.8, 1.8, 0.8);
+            const silhouetteMaterial = new THREE.MeshLambertMaterial({ color: 0x000000 });
+            for (let i = 0; i < 10; i++) {
+                const x = (Math.random() - 0.5) * worldSize * 2;
+                const z = (Math.random() - 0.5) * worldSize * 2;
+                const silhouette = new THREE.Mesh(silhouetteGeometry, silhouetteMaterial);
+                silhouette.position.set(x, 0.9, z);
+                silhouette.userData = { canBeBroken: true, type: 'creepy' };
+                worldContainer.add(silhouette);
+            }
+            
+            // Генерация облаков
+            const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
+            for (let i = 0; i < 50; i++) {
+                const x = (Math.random() - 0.5) * worldSize * 2;
+                const y = Math.random() * 5 + 10;
+                const z = (Math.random() - 0.5) * worldSize * 2;
+                const cloud = new THREE.Mesh(cloudGeometry, materials.cloud);
+                cloud.position.set(x, y, z);
+                cloud.userData = { canBeBroken: true, type: 'cloud' };
+                worldContainer.add(cloud);
+            }
+
+            scene.add(worldContainer);
+        }
+
+        // Обработка взаимодействия с блоками (разрушение и размещение)
+        function handleBlockInteraction(event) {
+            if (isGameOver) return;
+            if (!isMobile) {
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+            } else {
+                raycaster.setFromCamera(new THREE.Vector2(), camera);
+            }
+
+            const intersects = raycaster.intersectObjects(scene.children, true);
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                const object = intersect.object;
+                
+                if (event.type === 'click' || event.type === 'touchstart') {
+                    // Разрушение
+                    if (object.userData.canBeBroken) {
+                         scene.remove(object);
+                    }
+                } else if (event.type === 'contextmenu' || (isMobile && event.type === 'touchstart')) {
+                    // Размещение
+                    if (object.userData.canBeBroken || object.userData.type === 'grass') {
+                        const normal = intersect.face.normal;
+                        const position = object.position.clone();
+                        position.add(normal);
+                        
+                        const newBlockGeometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+                        const newBlock = new THREE.Mesh(newBlockGeometry, materials[selectedBlock]);
+                        newBlock.position.copy(position);
+                        newBlock.userData = { isBlock: true, type: selectedBlock, canBeBroken: true };
+                        scene.add(newBlock);
+                    }
+                }
+            }
+        }
+
+        // Обработка клавиатуры для управления игроком
+        const keys = {};
+        document.addEventListener('keydown', (event) => {
+            keys[event.key] = true;
+        });
+        document.addEventListener('keyup', (event) => {
+            keys[event.key] = false;
+        });
+
+        function handlePlayerMovement() {
+            if (isGameOver) return;
+            playerVelocity.x = 0;
+            playerVelocity.z = 0;
+
+            if (keys['w'] || keys['W'] || keys['ц'] || keys['Ц']) {
+                playerVelocity.z -= playerSpeed;
+            }
+            if (keys['s'] || keys['S'] || keys['ы'] || keys['Ы']) {
+                playerVelocity.z += playerSpeed;
+            }
+            if (keys['a'] || keys['A'] || keys['ф'] || keys['Ф']) {
+                playerVelocity.x -= playerSpeed;
+            }
+            if (keys['d'] || keys['D'] || keys['в'] || keys['В']) {
+                playerVelocity.x += playerSpeed;
+            }
+            if ((keys[' '] || keys[' ']) && isGrounded) {
+                playerVelocity.y += jumpStrength;
+                isGrounded = false;
+            }
+
+            camera.position.add(playerVelocity.clone().applyQuaternion(camera.quaternion));
+        }
+
+        // Обновление
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!isGameOver) {
+                // Проверка границ мира
+                const inWorldBounds = camera.position.x > -worldSize && camera.position.x < worldSize &&
+                                      camera.position.z > -worldSize && camera.position.z < worldSize;
+
+                // Применяем гравитацию только если игрок не на земле или вне границ
+                if (camera.position.y > 1.5 || !inWorldBounds) {
+                    playerVelocity.y += gravity;
+                } else {
+                    playerVelocity.y = 0;
+                }
+
+                camera.position.y += playerVelocity.y;
+
+                // Если игрок в пределах мира и на уровне земли, "приклеиваем" его к земле
+                if (inWorldBounds && camera.position.y < 1.5) {
+                    camera.position.y = 1.5;
+                    isGrounded = true;
+                } else {
+                    isGrounded = false;
+                }
+                
+                // Проверка на падение в бездну
+                if (camera.position.y < -5) {
+                    fallCounter++;
+                    document.getElementById('death-counter').innerText = `Попытки: ${fallCounter} / 3`;
+                    if (fallCounter < 4) {
+                        // Сброс в случайную точку
+                        camera.position.x = (Math.random() - 0.5) * worldSize * 2;
+                        camera.position.z = (Math.random() - 0.5) * worldSize * 2;
+                        camera.position.y = 10; // Начинаем падать с высоты
+                        playerVelocity.y = 0;
+                    } else {
+                        isGameOver = true;
+                        document.getElementById('game-over-text').style.display = 'block';
+                        
+                        // Создание могилы
+                        const crossVertical = new THREE.BoxGeometry(0.3, 2.5, 0.3);
+                        const crossHorizontal = new THREE.BoxGeometry(1.5, 0.3, 0.3);
+                        const verticalPart = new THREE.Mesh(crossVertical, materials.wood);
+                        verticalPart.position.set(camera.position.x, 1.25, camera.position.z);
+                        scene.add(verticalPart);
+                        const horizontalPart = new THREE.Mesh(crossHorizontal, materials.wood);
+                        horizontalPart.position.set(camera.position.x, 1.7, camera.position.z);
+                        scene.add(horizontalPart);
+
+                        // Размещаем камеру, чтобы было видно могилу
+                        camera.position.set(camera.position.x, 2, camera.position.z + 5);
+                        camera.lookAt(camera.position.x, 1.5, camera.position.z);
+                    }
+                }
+            }
+            
+            // Вращение Солнца/Луны
+            sun.rotation.y += 0.001;
+            moon.rotation.y += 0.001;
+            
+            // Обновление освещения в зависимости от положения солнца/луны
+            const sunAngle = sun.position.angleTo(camera.position);
+            const intensity = Math.max(0.1, 1.0 - Math.abs(Math.sin(sunAngle)));
+            directionalLight.intensity = intensity;
+            
+            // Вращение облаков
+            scene.children[1].rotation.y += 0.0005;
+
+            if (!isMobile) {
+                handlePlayerMovement();
+            }
+            
+            renderer.render(scene, camera);
+        }
+
+        let sun, moon, directionalLight;
+        
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a0a0a); // Темный фон для усиления тумана
+            scene.fog = new THREE.Fog(0x1a1a1a, 1, 10); // Густой туман
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.1);
+            scene.add(ambientLight);
+            
+            directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            directionalLight.position.set(100, 100, 100);
+            scene.add(directionalLight);
+            
+            const sunGeometry = new THREE.SphereGeometry(5, 32, 32);
+            const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xFFF8E7 });
+            sun = new THREE.Mesh(sunGeometry, sunMaterial);
+            sun.position.set(100, 20, 0);
+            scene.add(sun);
+            
+            const moonGeometry = new THREE.SphereGeometry(3, 32, 32);
+            const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xD3D3D3 });
+            moon = new THREE.Mesh(moonGeometry, moonMaterial);
+            moon.position.set(-100, -20, 0);
+            scene.add(moon);
+            
+            // Замена на более темные материалы, чтобы соответствовать туману
+            materials.dirt.color.setHex(0x2C1B12);
+            materials.grass.color.setHex(0x3A4D2E);
+            materials.stone.color.setHex(0x1A1A1A);
+            materials.wood.color.setHex(0x3F2B1A);
+            materials.creepy.color.setHex(0x111111);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 1.5, 0);
+
+            renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+            
+            if (!isMobile) {
+                document.body.requestPointerLock = document.body.requestPointerLock || document.body.mozRequestPointerLock;
+                document.body.addEventListener('click', () => {
+                    document.body.requestPointerLock();
+                });
+
+                document.addEventListener('mousemove', (event) => {
+                    if (document.pointerLockElement === document.body) {
+                        const movementX = event.movementX || event.mozMovementX || 0;
+                        const movementY = event.movementY || event.mozMovementY || 0;
+                        camera.rotation.y -= movementX * 0.002;
+                        camera.rotation.x -= movementY * 0.002;
+                        camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
+                    }
+                });
+            }
+
+            document.addEventListener('click', (event) => {
+                if (!isMobile && document.pointerLockElement === document.body) {
+                    handleBlockInteraction(event);
+                }
+            });
+
+            document.addEventListener('contextmenu', (event) => {
+                event.preventDefault();
+                if (!isMobile && document.pointerLockElement === document.body) {
+                    handleBlockInteraction(event);
+                }
+            });
+            
+            if (isMobile) {
+                document.getElementById('jump-button').addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    if (isGrounded) {
+                        playerVelocity.y += jumpStrength;
+                        isGrounded = false;
+                    }
+                });
+                document.getElementById('place-button').addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    handleBlockInteraction(e);
+                });
+            }
+            
+            generateWorld();
+            animate();
+            
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            isMobile = window.innerWidth <= 768;
+            if (isMobile) {
+                document.getElementById('mobile-controls').style.display = 'flex';
+                document.body.style.cursor = 'default';
+                document.getElementById('crosshair').style.display = 'none';
+            } else {
+                document.getElementById('mobile-controls').style.display = 'none';
+                document.body.style.cursor = 'none';
+                document.getElementById('crosshair').style.display = 'block';
+            }
+        }
+        
+        window.onload = function() {
+            const introScreen = document.getElementById('intro-screen');
+            setTimeout(() => {
+                introScreen.style.opacity = '0';
+            }, 3000); // 3-секундная задержка
+
+            setTimeout(() => {
+                introScreen.style.display = 'none';
+                init();
+                onWindowResize();
+            }, 5000); // Экран исчезнет через 5 секунд
+        };
+
+    </script>
+</body>
+</html>
